@@ -1,114 +1,86 @@
 # TiendaOnline — Sistema de Gestión de Pedidos, Inventario y Clientes
 
-Monorepo con arquitectura de microservicios para el TP final. Ver el enunciado completo en
-[`tp_final_enunciado.md`](./tp_final_enunciado.md).
+Monorepo con arquitectura de microservicios para el Trabajo Práctico de **Fundamentos de Desarrollo Backend**.
 
 ## Estructura del repositorio
 
-```
-tp/
+```text
+fube-tp-2026/
 ├── servicio-clientes/        # API de clientes
-├── servicio-inventario/      # API de stock/inventario
-└── servicio-pedidos/         # API de pedidos
+├── servicio-inventario/      # API de stock e inventario
+├── servicio-pedidos/         # API de pedidos
+└── observabilidad/           # Stack Docker: Grafana, Loki y Prometheus
 ```
 
-El repositorio es un multi-project build de Gradle: un único `settings.gradle`/`build.gradle`
-en la raíz declara los tres módulos y la configuración común (Spring Boot 3.3, Java 17,
-plugins, wrapper). Cada servicio tiene su propia base de datos PostgreSQL y su propio esquema
-versionado con Flyway. No comparten código ni base de datos entre sí: toda comunicación entre
-servicios será vía HTTP (o mocks en tests).
+El repositorio es un multi-project build de Gradle con **Spring Boot 3.3.4** y **Java 21**. Cada microservicio cuenta con su propia base de datos PostgreSQL 16+ versionada con **Flyway** (`ddl-auto: validate`), sin claves foráneas entre bases. Toda la comunicación entre servicios se realiza de forma síncrona por HTTP mediante `RestClient`.
 
-Para abrir el proyecto en IntelliJ: **File → Open** sobre la carpeta raíz `tp` (no sobre cada
-subcarpeta) — IntelliJ importa los tres módulos de una sola vez como proyecto Gradle.
+Para abrir el proyecto en IntelliJ: **File → Open** sobre la carpeta raíz del repositorio (no sobre cada subcarpeta) para importar los tres módulos Gradle a la vez.
 
-## Servicios y puertos
+## Servicios, puertos y documentación Swagger
 
-| Servicio             | Puerto app | Base de datos   |
-|----------------------|-----------|------------------|
-| servicio-clientes    | 8081      | clientes_db      |
-| servicio-inventario  | 8082      | inventario_db    |
-| servicio-pedidos     | 8083      | pedidos_db       |
+| Servicio              | Puerto | Base de datos   | Swagger UI                            |
+|-----------------------|--------|-----------------|---------------------------------------|
+| `servicio-clientes`   | `8081` | `clientes_db`   | http://localhost:8081/swagger-ui.html |
+| `servicio-inventario` | `8082` | `inventario_db` | http://localhost:8082/swagger-ui.html |
+| `servicio-pedidos`    | `8083` | `pedidos_db`    | http://localhost:8083/swagger-ui.html |
 
-Las tres bases viven en la misma instancia local de PostgreSQL, puerto `5432`, con usuario/contraseña
-`postgres` / `postgres` (solo entorno local).
+Las tres bases viven en la instancia local de PostgreSQL en el puerto `5432` con usuario/contraseña `postgres` / `postgres` (solo entorno local).
 
-## Cómo levantar el entorno
+## Cómo levantar el entorno completo
 
-1. Levantar una instancia de PostgreSQL (versión 16 o superior). Dos opciones, elegir una:
+### 1. Base de datos PostgreSQL 16+
+Crear las tres bases vacías (`clientes_db`, `inventario_db` y `pedidos_db`, owner `postgres`) mediante pgAdmin 4 o Docker:
 
-   **Opción A: instalador nativo**
+```bash
+docker run --name postgres-tp -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
+```
 
-   - Descargar el instalador desde https://www.postgresql.org/download/ para tu sistema operativo
-     (en Windows, el instalador de EnterpriseDB incluye pgAdmin).
-   - Durante la instalación, cuando pida la contraseña del superusuario `postgres`, poner `postgres`.
-   - Dejar el puerto por defecto, `5432`.
+Al iniciar cada servicio, **Flyway** aplica automáticamente:
+- `V1__*`: Creación del esquema de tablas de dominio.
+- `V2__insert_datos_iniciales.sql`: Carga de datos iniciales sincronizados para pruebas.
 
-   **Opción B: Docker**
+### 2. Stack de Observabilidad (Loki + Prometheus + Grafana)
+Con **Docker Desktop** corriendo, levantar el stack desde `observabilidad/`:
 
-   - Con Docker Desktop instalado y corriendo, ejecutar:
+```bash
+cd observabilidad
+docker compose up -d
+```
 
-     ```bash
-     docker run --name postgres-tp -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
-     ```
+- **Grafana:** http://localhost:3000 (usuario `admin`, contraseña `admin`).
 
-   - Esto levanta un contenedor con el superusuario `postgres` / contraseña `postgres` en el
-     puerto `5432`, igual que la opción A. pgAdmin no viene incluido en la imagen: instalarlo
-     aparte desde https://www.pgadmin.org/download/ para poder hacer el paso 2.
+### 3. Levantar los 3 microservicios
+Configurar la variable de entorno `STATSIG_SERVER_SECRET_KEY` para `servicio-clientes` (si Statsig no responde, el flag `mask-pii` opera enmascarando los datos personales por defecto).
 
-2. Crear las tres bases de datos con pgAdmin:
+Para el correcto funcionamiento de Grafana Loki, activar el perfil **`loki`**:
 
-   - Abrir pgAdmin, conectarse al servidor local (`localhost`, puerto `5432`, usuario `postgres`,
-     contraseña `postgres`).
-   - En el árbol de la izquierda, click derecho sobre **Databases** → **Create** → **Database...**
-   - Crear una base llamada `clientes_db`, owner `postgres`. Repetir para `inventario_db` y `pedidos_db`.
-   - No hace falta crear tablas a mano: cada servicio corre sus propias migraciones de Flyway al
-     arrancar.
+- **Por línea de comandos** (en 3 terminales desde la raíz):
+  ```bash
+  STATSIG_SERVER_SECRET_KEY="<statsig_key>" ./gradlew :servicio-clientes:bootRun --args='--spring.profiles.active=loki'
+  ./gradlew :servicio-inventario:bootRun --args='--spring.profiles.active=loki'
+  ./gradlew :servicio-pedidos:bootRun --args='--spring.profiles.active=loki'
+  ```
+- **Desde IntelliJ IDEA:** En **Run → Edit Configurations...** para `ServicioClientesApplication`, `ServicioInventarioApplication` y `ServicioPedidosApplication`, configurar `Active profiles: loki` y agregar `STATSIG_SERVER_SECRET_KEY` en `ServicioClientesApplication`.
 
-3. Correr cada servicio. Dos formas, elegir una:
+## Proceso Batch de expiración de pedidos (`servicio-pedidos`)
+- **Ejecución programada (`@Scheduled`):** Configuración por defecto `0 0 3 * * *`, 03:00 AM).
+- **Ejecución manual:** `POST http://localhost:8083/api/v1/jobs/expiracion-pedidos`.
+- Expira pedidos en estado `CREADO` con más de 24 horas de antigüedad, libera sus reservas en `servicio-inventario` y registra el resumen de leídos, expirados y fallidos al finalizar.
 
-   **Opción A: línea de comandos**, en terminales separadas desde la raíz del repo:
+## Trazabilidad en Grafana Loki
+Las respuestas HTTP de los tres microservicios incluyen el encabezado **`X-Trace-Id`**. Al realizar una operación que cruza microservicios, el mismo `traceId` se propaga automáticamente a `:8081` y `:8082`. En **Grafana → Explore → Loki**, se puede reconstruir toda la traza con:
 
-   ```bash
-   ./gradlew :servicio-clientes:bootRun
-   ./gradlew :servicio-inventario:bootRun
-   ./gradlew :servicio-pedidos:bootRun
-   ```
+```logql
+{app=~"servicio-.*"} | json | traceId="<valor_del_header_X-Trace-Id>"
+```
 
-   **Opción B: desde IntelliJ**
+## Tests y cobertura (JaCoCo)
 
-   - Abrir la clase principal del servicio (por ejemplo
-     `servicio-clientes/src/main/java/.../ServicioClientesApplication.java`).
-   - Click en el ícono ▶ al lado de la declaración de la clase (o click derecho → **Run**).
-   - Repetir para `ServicioInventarioApplication` y `ServicioPedidosApplication`.
-   - Cada Run abre su propia pestaña en la consola de IntelliJ, así que los tres quedan
-     corriendo en paralelo sin pisarse.
+Ejecutar todos los tests y generar los reportes de JaCoCo:
 
-   Al arrancar, cada servicio ejecuta automáticamente sus migraciones de Flyway contra su base.
-   Los tres pueden correr en paralelo sin conflicto, ya que usan puertos de app distintos y cada
-   uno apunta a su propia base dentro de la misma instancia de Postgres.
+```bash
+./gradlew test jacocoTestReport jacocoTestCoverageVerification
+```
 
-4. Para correr los tests de un servicio (requieren la base levantada, ya que el contexto de
-   Spring corre las migraciones de Flyway al arrancar):
+Los reportes de cobertura se generan en `<modulo>/build/reports/jacoco/test/html/index.html`.
 
-   ```bash
-   ./gradlew :servicio-clientes:test
-   ```
-
-   O `./gradlew test` desde la raíz para correr los tests de los tres servicios.
-
-## Estado actual
-
-Por ahora cada servicio es un esqueleto: aplicación Spring Boot que levanta, se conecta a su
-base y aplica las migraciones iniciales de Flyway con las tablas del modelo de datos del
-enunciado. Todavía no hay endpoints REST, lógica de negocio, comunicación entre servicios,
-job batch, feature flags ni observabilidad — se irán agregando de forma incremental.
-
-### Próximos pasos (según el enunciado)
-
-- [ ] Endpoints REST de cada servicio (OpenAPI/Swagger, validaciones, manejo de errores)
-- [ ] Comunicación servicio-pedidos → servicio-clientes / servicio-inventario al crear un pedido
-- [ ] Endpoint `GET /clientes/{id}/ordenes` (servicio-clientes → servicio-pedidos)
-- [ ] Job batch nocturno de expiración de pedidos (Spring Batch)
-- [ ] Feature flag de estrategia de asignación de stock
-- [ ] Tests (TDD, Mockito, MockServer para integración entre servicios)
-- [ ] Observabilidad: Actuator/Micrometer, logs estructurados con correlation id, tracing distribuido
