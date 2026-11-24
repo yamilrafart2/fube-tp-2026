@@ -1,3 +1,4 @@
+# Configuración principal de servicio-pedidos
 server:
   port: 8083
 
@@ -18,3 +19,39 @@ spring:
   batch:
     job:
       enabled: false
+    jdbc:
+      initialize-schema: always
+
+# Clientes HTTP hacia servicio-clientes y servicio-inventario
+servicios:
+  clientes:
+    url: ${SERVICIO_CLIENTES_URL:http://localhost:8081}
+  inventario:
+    url: ${SERVICIO_INVENTARIO_URL:http://localhost:8082}
+  timeouts:
+    connect-ms: 2000
+    read-ms: 3000
+
+# Configuración de Job Batch
+jobs:
+  expiracion-pedidos:
+    cron: ${JOB_EXPIRACION_CRON:0 0 3 * * *}
+    endpoint-habilitado: ${JOB_EXPIRACION_ENDPOINT_HABILITADO:true}
+
+# Observabilidad
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http:
+          server:
+            requests: true
